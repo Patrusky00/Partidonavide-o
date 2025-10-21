@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>El Torneo de la Nieve Infinita — Standalone (Fix)</title>
+  <style>
+    :root { --blue:#1e3a8a; --blue2:#2563eb; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Arial; background: radial-gradient(ellipse at top, rgba(30,64,175,.6), rgba(29,78,216,.9)), #0b1535; color:#fff; }
+    .wrap { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; position:relative; }
+    .card { width:min(820px, 100%); background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:20px; padding:24px; backdrop-filter: blur(10px); box-shadow: 0 20px 50px rgba(0,0,0,.35); position:relative; overflow:hidden; }
+    h1 { margin:0 0 12px; font-size:28px; font-weight:800; text-shadow: 0 2px 8px rgba(0,0,0,.35);}
+    p { line-height:1.6; font-size:18px; }
+    .btn { display:inline-block; padding:12px 16px; background:#fff; color:#1e3a8a; border-radius:12px; font-weight:700; border:none; cursor:pointer; transition:.15s transform, .15s background; }
+    .btn:hover { background:#e5e7eb; }
+    .btn:active { transform: scale(.98); }
+    .choices { display:grid; gap:12px; margin-top:16px; }
+    .toolbar { display:flex; gap:8px; align-items:center; }
+    .tag { font-size:12px; opacity:.8; }
+    .snow-dot { position:absolute; width:6px; height:6px; border-radius:9999px; background:rgba(255,255,255,.85); filter: blur(1px); }
+    @keyframes snowfall { from { transform:translateY(-100vh);} to { transform:translateY(100vh);} }
+    .highlight { background: rgba(253, 230, 138, .85); color:#0b255f; }
+    .row { display:grid; gap:10px; margin:12px 0; }
+    input, select { padding:10px 12px; border-radius:10px; border:none; outline:none; color:#0b255f; }
+    .small { font-size:12px; opacity:.7; }
+    .banner { position:fixed; inset:16px 16px auto 16px; background:rgba(255,255,255,.9); color:#0b255f; padding:10px 12px; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.25); font-size:14px; display:none; }
+    .banner.show { display:block; }
+  </style>
+</head>
+<body>
+<div id="banner" class="banner"></div>
+<div id="root"></div>
+
+<!-- React + Babel (no build) -->
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script>
+// Desbloquear audio/TTS con el primer toque/click (autoplay policies)
+(function(){
+  const unlock = () => {
+    try { window.speechSynthesis && window.speechSynthesis.resume(); } catch(e){}
+    try { new Audio().play().catch(()=>{}); } catch(e){}
+    document.removeEventListener('click', unlock, true);
+    document.removeEventListener('touchstart', unlock, true);
+  };
+  document.addEventListener('click', unlock, true);
+  document.addEventListener('touchstart', unlock, true);
+})();
+
+function showBanner(msg, kind) {
+  var el = document.getElementById('banner');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'banner show';
+  if (kind === 'error') el.style.background = 'rgba(255,240,240,.95)';
+  if (kind === 'info') el.style.background = 'rgba(240,250,255,.95)';
+  clearTimeout(window.__bannerTimer);
+  window.__bannerTimer = setTimeout(()=>{ el.className='banner'; }, 4000);
+}
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo } = React;
+
+const DEFAULT_PROFILE = { player: "", team: "Auroras FC", difficulty: "normal", voiceURI: "" };
+
+const loadProfile = () => {
+  try { const raw = localStorage.getItem("tn_profile"); return raw ? { ...DEFAULT_PROFILE, ...JSON.parse(raw) } : DEFAULT_PROFILE; } catch { return DEFAULT_PROFILE; }
+};
+const saveProfile = (p) => { localStorage.setItem("tn_profile", JSON.stringify(p)); };
+
+// Helper para rutas robustas: usa ./audio/... relativo al index, funcione en raíz o subcarpeta
+const asset = (name) => `./audio/${name}`;
+
+const SCENES = [
+  { title:"❄️ Escena 1: La Tormenta Infinita",
+    text:"La nieve cae sin cesar. Lucas mira por la ventana del colegio vacío. Un resplandor azulado cruza el cielo y cae cerca del campo de fútbol. Darío lo observa con intriga mientras Rafa bromea diciendo que quizá es un balón mágico... {PLAYER} se ajusta la bufanda del {TEAM} y siente que algo grande está por empezar.",
+    choices:[{label:"Salir a investigar el resplandor", next:1},{label:"Esperar y observar desde el aula", next:2}],
+    audio:asset("escena1.mp3"), syncJson:asset("escena1.json"), music:asset("music1.mp3")
+  },
+  { title:"✨ Escena 2: El Mensaje Helado",
+    text:"Encuentran un cristal con un emblema antiguo: 'Torneo de la Nieve Infinita'. El balón del gimnasio habla: 'Soy Nébula. Solo un equipo unido podrá salvar la luz del invierno.' Lucas mira a {PLAYER}: '¿Vamos? El {TEAM} nunca se rinde.'",
+    choices:[{label:"Aceptar el desafío y reunir al equipo", next:3},{label:"Dudar y volver a casa", next:4}],
+    audio:asset("escena2.mp3"), music:asset("music2.mp3")
+  },
+  { title:"🌨️ Escena Alternativa: La Espera",
+    text:"{PLAYER} decide quedarse, pero la tormenta empeora. El balón comienza a brillar por sí solo y una voz habla: 'El tiempo se acaba. El mundo necesita vuestro valor.'",
+    choices:[{label:"Salir finalmente a investigar", next:1}],
+    audio:asset("escena3.mp3"), music:asset("music1.mp3")
+  },
+  { title:"🏔️ Escena 3: El Viaje al Norte",
+    text:"El equipo atraviesa auroras boreales. Conocen a Los Hijos del Hielo y a las Valkirias del Frío. Uno de ellos cae en una grieta de hielo. Darío mira a Lucas; Lucas mira a {PLAYER}. ¿Qué haréis?",
+    choices:[{label:"Ayudar al jugador caído", next:5},{label:"Seguir avanzando para ganar tiempo", next:6}],
+    audio:asset("escena4.mp3"), music:asset("music3.mp3")
+  },
+  { title:"🏠 Escena Alternativa: La Duda",
+    text:"El grupo duda demasiado y la nieve cubre la ciudad. {PLAYER} siente que una luz interior se apaga. Nébula aparece: 'A veces, esperar también es perder.'",
+    choices:[{label:"Reunir al equipo y comenzar el viaje", next:3}],
+    audio:asset("escena5.mp3"), music:asset("music2.mp3")
+  },
+  { title:"💫 Escena 4: La Decisión del Corazón",
+    text:"Ayudáis al rival. La grieta se cierra y el hielo brilla. Nébula: 'La verdadera fuerza no está en ganar, sino en no dejar a nadie atrás.' {PLAYER} y el {TEAM} sienten subir su energía de luz.",
+    choices:[{label:"Continuar hacia el torneo final", next:7}],
+    audio:asset("escena6.mp3"), music:asset("music4.mp3")
+  },
+  { title:"⚡ Escena 4: La Ambición",
+    text:"Decidís seguir sin mirar atrás. Avanzáis rápido, pero el cielo se oscurece. Darío guarda silencio; cada paso del {TEAM} deja huellas más frías.",
+    choices:[{label:"Llegar al estadio del torneo", next:7}],
+    audio:asset("escena7.mp3"), music:asset("music4.mp3")
+  },
+  { title:"🏟️ Escena 5: El Gran Partido",
+    text:"El campo brilla con auroras. Cada emoción cambia el clima: la unión trae sol, la ira provoca ventiscas. Un rival hiere a Darío. Lucas y {PLAYER} deben decidir...",
+    choices:[{label:"Detener el partido y ayudar a Darío", next:8},{label:"Seguir jugando hasta el final", next:9}],
+    audio:asset("escena8.mp3"), music:asset("music5.mp3"), effects:asset("efectos_estadio.mp3")
+  },
+  { title:"🌟 Final Luminoso",
+    text:"Ayudáis a Darío y el público rompe el silencio con aplausos de luz. Nébula se eleva transformándose en constelación. La nieve se vuelve estrellas. {PLAYER} y el {TEAM} han salvado la Navidad. 🎄",
+    choices:[{label:"Volver al inicio", next:0}],
+    audio:asset("final1.mp3"), music:asset("music6.mp3")
+  },
+  { title:"❄️ Final Frío",
+    text:"Seguís jugando y ganáis, pero el estadio queda cubierto de hielo. Nébula desaparece. {PLAYER} comprende que no todo se trata de la victoria.",
+    choices:[{label:"Intentar otra decisión", next:0}],
+    audio:asset("final2.mp3"), music:asset("music6.mp3")
+  }
+];
+
+function SnowLayer() {
+  const dots = Array.from({length:120},(_,i)=>i);
+  return <div style={{position:"absolute", inset:0, pointerEvents:"none", overflow:"hidden"}}>
+    {dots.map((i)=>{
+      const left = Math.random()*100;
+      const delay = Math.random()*12;
+      const size = Math.random()*6+2;
+      const duration = 10 + Math.random()*10;
+      return <span key={i} className="snow-dot" style={{left:left+"%", top:"-10vh", width:size+"px", height:size+"px", animation:`snowfall ${duration}s linear ${delay}s infinite`}}/>;
+    })}
+  </div>;
+}
+
+function StartScreen({ onStart, profile, setProfile, voices }) {
+  const [local, setLocal] = React.useState(profile);
+  React.useEffect(()=>setLocal(profile),[profile]);
+  const update=(k,v)=>setLocal(prev=>({...prev,[k]:v}));
+  const handleStart=()=>{
+    const clean={...local, player:(local.player||"").trim()||"Jugador/a", team:(local.team||"").trim()||"Auroras FC"};
+    setProfile(clean); saveProfile(clean); onStart();
+  };
+  return <div className="card">
+    <SnowLayer/>
+    <h1>El Torneo de la Nieve Infinita</h1>
+    <p className="tag">Personaliza tu aventura antes de comenzar.</p>
+    <div className="row">
+      <label className="row">
+        <span className="small">Nombre del jugador</span>
+        <input placeholder="Tu nombre" value={local.player} onChange={e=>update("player", e.target.value)}/>
+      </label>
+      <label className="row">
+        <span className="small">Nombre del equipo</span>
+        <input placeholder="Auroras FC" value={local.team} onChange={e=>update("team", e.target.value)}/>
+      </label>
+      <label className="row">
+        <span className="small">Dificultad</span>
+        <select value={local.difficulty} onChange={e=>update("difficulty", e.target.value)}>
+          <option value="easy">Fácil</option>
+          <option value="normal">Normal</option>
+          <option value="hard">Difícil</option>
+        </select>
+      </label>
+      <label className="row">
+        <span className="small">Voz (TTS del navegador)</span>
+        <select value={local.voiceURI} onChange={e=>update("voiceURI", e.target.value)}>
+          <option value="">Automática (es-ES)</option>
+          {voices.map(v=><option key={v.voiceURI} value={v.voiceURI}>{v.name} — {v.lang}</option>)}
+        </select>
+        <span className="small">Consejo: prueba “es-ES”, “es-MX” o voces infantiles si tu navegador las ofrece.</span>
+      </label>
+    </div>
+    <div className="toolbar">
+      <button className="btn" onClick={handleStart}>¡Empezar!</button>
+      <button className="btn" style={{background:"rgba(255,255,255,.7)"}} onClick={()=>{localStorage.removeItem("tn_profile"); setLocal({...DEFAULT_PROFILE});}}>Reset</button>
+    </div>
+    <p className="small">Tus preferencias se guardarán en este dispositivo.</p>
+  </div>;
+}
+
+function useSyncedNarration({ sceneObj, profile, onNarration, musicEnabled }) {
+  const [text, setText] = useState("");
+  const [highlight, setHighlight] = useState({start:-1,end:-1});
+
+  useEffect(()=>{
+    const replaceVars = (t)=>t.replaceAll("{PLAYER}", profile.player||"Jugador/a").replaceAll("{TEAM}", profile.team||"Auroras FC");
+    setText(replaceVars(`${sceneObj.title}. ${sceneObj.text}`));
+  }, [sceneObj, profile]);
+
+  useEffect(()=>{
+    let stop=false;
+    onNarration?.(true);
+    window.speechSynthesis?.cancel();
+    let music, effects; let audio;
+
+    const startTTS = ()=>{
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang="es-ES";
+      const rate = profile.difficulty==="easy"?0.9:profile.difficulty==="hard"?1.05:0.97;
+      utter.rate = rate;
+      if (profile.voiceURI && window.speechSynthesis){
+        const vs = window.speechSynthesis.getVoices();
+        const sel = vs.find(v=>v.voiceURI===profile.voiceURI) || vs.find(v=>v.lang?.toLowerCase().startsWith("es"));
+        if (sel) utter.voice = sel;
+      } else {
+        const vs = window.speechSynthesis?.getVoices?.()||[];
+        const es = vs.find(v=>v.lang?.toLowerCase().startsWith("es"));
+        if (es) utter.voice=es;
+      }
+      utter.onboundary = (e)=>{ if (e.charIndex!=null) setHighlight({start:e.charIndex, end:e.charIndex+1}); };
+      utter.onend = ()=>{ onNarration?.(false); setHighlight({start:-1,end:-1}); };
+      utter.onerror = ()=>{ onNarration?.(false); setHighlight({start:-1,end:-1}); };
+      window.speechSynthesis.speak(utter);
+      showBanner("Usando voz del navegador (TTS)", "info");
+    };
+
+    const tryMp3Sync = async ()=>{
+      if (!sceneObj.audio || !sceneObj.syncJson) throw new Error("no sync");
+      // fetch json
+      const res = await fetch(sceneObj.syncJson);
+      if (!res.ok) throw new Error("no json");
+      const data = await res.json();
+      // prepare map
+      let cursor=0;
+      const mapped = data.map(seg=>{
+        const segText = seg.segment.replaceAll("{PLAYER}", profile.player||"Jugador/a").replaceAll("{TEAM}", profile.team||"Auroras FC");
+        const idx = text.indexOf(segText, cursor);
+        const startChar = idx>=0? idx: cursor;
+        const endChar = idx>=0? idx+segText.length: cursor;
+        cursor = endChar;
+        return {...seg, startChar, endChar};
+      });
+      // play background
+      if (musicEnabled && sceneObj.music){
+        music = new Audio(sceneObj.music); music.loop=true; music.volume=0.35; music.play().catch(()=>{});
+      }
+      if (sceneObj.effects){ effects = new Audio(sceneObj.effects); effects.volume=0.7; effects.play().catch(()=>{}); }
+      // play narrative
+      audio = new Audio(sceneObj.audio);
+      const tick = ()=>{
+        if (stop) return;
+        const t = audio.currentTime;
+        const seg = mapped.find(s=>t>=s.start && t<s.end) || mapped[mapped.length-1];
+        if (seg) setHighlight({start:seg.startChar, end:seg.endChar});
+        requestAnimationFrame(tick);
+      };
+      audio.addEventListener("ended", ()=>{ onNarration?.(false); setHighlight({start:-1,end:-1}); });
+      audio.addEventListener("error", ()=>{ showBanner("No se encontró el audio/JSON. Cambio a voz del navegador.", "error"); startTTS(); });
+      await audio.play().then(()=>{ requestAnimationFrame(tick); }).catch(()=>{ showBanner("Autoplay bloqueado. Toca en la pantalla y vuelve a intentarlo.", "info"); startTTS(); });
+    };
+
+    (async()=>{
+      try { await tryMp3Sync(); }
+      catch { startTTS(); }
+    })();
+
+    return ()=>{
+      stop=true;
+      window.speechSynthesis?.cancel();
+      if (music) music.pause();
+      if (effects) effects.pause();
+      if (audio) audio.pause();
+    };
+  }, [sceneObj, text, profile, musicEnabled]);
+
+  const rendered = useMemo(()=>{
+    const s = Math.max(0, highlight.start);
+    const e = Math.max(0, highlight.end);
+    const before = s>0 ? text.slice(0,s) : "";
+    const mid = (s>=0 && e>s) ? text.slice(s,e) : "";
+    const after = e>0 ? text.slice(e) : text;
+    return <span><span>{before}</span><span className="highlight">{mid}</span><span>{after}</span></span>;
+  }, [text, highlight]);
+
+  return { rendered };
+}
+
+function App(){
+  const [scene, setScene] = useState(-1);
+  const [narrating, setNarrating] = useState(false);
+  const [profile, setProfile] = useState(DEFAULT_PROFILE);
+  const [voices, setVoices] = useState([]);
+  const [musicEnabled, setMusicEnabled] = useState(true);
+
+  useEffect(()=>{
+    setProfile(loadProfile());
+    if (window.speechSynthesis){
+      const load = ()=>{
+        const all = window.speechSynthesis.getVoices()||[];
+        const sorted = [...all].sort((a,b)=>{
+          const aes = a.lang?.toLowerCase().startsWith("es") ? -1 : 0;
+          const bes = b.lang?.toLowerCase().startsWith("es") ? -1 : 0;
+          return aes - bes;
+        });
+        setVoices(sorted);
+      };
+      load(); window.speechSynthesis.onvoiceschanged = load;
+    }
+  }, []);
+
+  if (scene < 0) {
+    return <div className="wrap"><StartScreen onStart={()=>setScene(0)} profile={profile} setProfile={setProfile} voices={voices}/></div>;
+  }
+
+  const current = SCENES[scene];
+  const { rendered } = useSyncedNarration({ sceneObj: current, profile, onNarration:setNarrating, musicEnabled });
+
+  return <div className="wrap">
+    <div className="card">
+      <SnowLayer/>
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:"8px"}}>
+        <h1>{current.title}</h1>
+        <div className="toolbar">
+          <button className="btn" onClick={()=>setScene(-1)}>⚙️ Personalizar</button>
+          <button className="btn" onClick={()=>setMusicEnabled(v=>!v)}>{musicEnabled? "🔊 Música ON":"🔇 Música OFF"}</button>
+        </div>
+      </div>
+      <p>{rendered}</p>
+      <div className="choices">
+        {current.choices.map((c,i)=>(
+          <button key={i} className="btn" onClick={()=>setScene(c.next)}>{c.label}</button>
+        ))}
+      </div>
+      <p className="small" style={{marginTop:"8px"}}>{narrating? "🔊 Narración sincronizada":"💤 Narración en pausa"} · Dificultad: {profile.difficulty}</p>
+      <p className="small">El Torneo de la Nieve Infinita © 2025</p>
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
