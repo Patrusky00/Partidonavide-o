@@ -1,0 +1,27 @@
+[
+  {
+    "segment": "La nieve cae sin cesar.",
+    "start": 0.0,
+    "end": 3.2
+  },
+  {
+    "segment": "Lucas mira por la ventana del colegio vacío.",
+    "start": 3.2,
+    "end": 7.8
+  },
+  {
+    "segment": "Un resplandor azulado cruza el cielo y cae cerca del campo de fútbol.",
+    "start": 7.8,
+    "end": 14.9
+  },
+  {
+    "segment": "Darío lo observa con intriga mientras Rafa bromea diciendo que quizá es un balón mágico...",
+    "start": 14.9,
+    "end": 22.5
+  },
+  {
+    "segment": "{PLAYER} se ajusta la bufanda del {TEAM} y siente que algo grande está por empezar.",
+    "start": 22.5,
+    "end": 28.0
+  }
+]
